@@ -1,6 +1,8 @@
+import { Contract, providers } from "ethers";
 import Head from 'next/head';
 import { useEffect, useRef, useState } from "react";
 import Web3Modal from "web3modal";
+import { abi, WHITELIST_CONTRACT_ADDRESS } from "../constants";
 import styles from '../styles/Home.module.css';
 
 
@@ -16,18 +18,82 @@ export default function Home() {
   // Create a reference to the Web3 Modal (used for connecting to Metamask) which persists as long as the page is open
   const web3ModalRef = useRef();
 
-  /**
-  * Returns a Provider or Signer object representing the Ethereum RPC with or without the
-  * signing capabilities of metamask attached
-  *
-  * A `Provider` is needed to interact with the blockchain - reading transactions, reading balances, reading state, etc.
-  *
-  * A `Signer` is a special type of Provider used in case a `write` transaction needs to be made to the blockchain, which involves the connected account
-  * needing to make a digital signature to authorize the transaction being sent. Metamask exposes a Signer API to allow your website to
-  * request signatures from the user using Signer functions.
-  *
-  * @param {*} needSigner - True if you need the signer, default false otherwise
-  */
+
+  const getProviderOrSigner = async (needSigner = false) =>{
+    try{
+      const provider = await web3ModalRef.current.connect();
+      const web3Provider = new providers.Web3Provider(provider); 
+    
+      const { chainId } = await web3Provider.getNetwork();
+      if(chainId != 4) {
+        window.alert("Change the network to rinkeby!");
+        throw new Error("Change network to rinkeby!")
+      }
+      // we need signer when we write to smart contract
+      // when we need signer we can write: getProviderOrSigner(needSigner=true)
+      if (needSigner){
+        const signer = web3Provider.getSigner();
+        return signer; 
+      }
+      return web3Provider;
+    } catch (err){
+      console.log(err)
+    }
+
+  }
+
+  const addAddressToWhitelist = async() =>{
+    try {
+      const signer = await getProviderOrSigner(true);
+      const whitelistContract = new Contract(
+        WHITELIST_CONTRACT_ADDRESS, abi, signer
+      );
+      const tx = await whitelistContract.addAddressToWhitelist();
+      setLoading(true);
+      await tx.wait();
+      setLoading(false);
+      await getNumberOfWhitelisted();
+      setJoinedWhitelist(true);
+    } catch (err) {
+      console.log(err)
+    }
+  }
+  
+
+  const getNumberOfWhitelisted = async() =>{
+    try {
+      const provider = await getProviderOrSigner();
+      const whitelistContract = new Contract(
+        WHITELIST_CONTRACT_ADDRESS, abi, provider
+      );
+      const _numberOfWhitelisted = await whitelistContract.numAddressesWhitelisted();
+      setNumberOfWhitelisted(_numberOfWhitelisted);
+    } catch (err) {
+      console.log(err)
+    }
+  };
+
+
+  const checkIfAddressInWhitelist = async () => {
+    try {
+      const signer = await getProviderOrSigner(true);
+      const whitelistContract = new Contract(
+        WHITELIST_CONTRACT_ADDRESS,
+        abi,
+        signer
+      );
+      // Get the address associated to the signer which is connected to  MetaMask
+      const address = await signer.getAddress();
+      // call the whitelistedAddresses from the contract
+      const _joinedWhitelist = await whitelistContract.whitelistedAddresses(
+        address
+      );
+      setJoinedWhitelist(_joinedWhitelist);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
 
 
   /*
@@ -35,15 +101,46 @@ export default function Home() {
   */
   const connectWallet = async () => {
     try{
-      setWalletConnected(true)
+      await getProviderOrSigner();
+      setWalletConnected(true);
+      checkIfAddressInWhitelist();
+      getNumberOfWhitelisted()
     } catch (error) {
       console.error(error)
+    }
+  }
+
+  const renderButton = () => {
+    if (walletConnected) {
+      if (joinedWhitelist){
+        return (
+          <div className={styles.description}>
+            Thanks for joining the Whitelist!
+          </div>
+        );
+      } else if (loading) {
+        return (
+          <button className={styles.button}>Loading...</button>
+        );
+      } else {
+        return (
+          <button onClick={addAddressToWhitelist} className={styles.button}>
+            Join the Whitelist
+          </button>
+        )
+      }
+    } else {
+      return (
+        <button onClick={connectWallet} className={styles.button}>
+          Connect your wallet
+        </button>
+      );
     }
   }
   
   useEffect(() => {
     if (!walletConnected) {
-      Web3ModalRef.current = new Web3Modal({
+      web3ModalRef.current = new Web3Modal({
         network: "rinkeby",
         providerOptions: {},
         disableInjectedProvider: false,
@@ -64,6 +161,7 @@ export default function Home() {
           <div className={styles.description}>
            {numberOfWhitelisted} have already joined to the whitelist 
           </div>
+          {renderButton()}
           <div>
             <img className={styles.image} src="./crypto-devs.svg"></img>
           </div>
